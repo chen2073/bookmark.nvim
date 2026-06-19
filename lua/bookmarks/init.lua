@@ -276,6 +276,76 @@ function M.jump(id)
   return true
 end
 
+--- Jump to the next bookmark after the current cursor position, wrapping around.
+--- `kind` filters by type ("file"/"line"/"location"); nil or "all" searches everything.
+function M.jump_next(kind)
+  ensure_setup()
+  if kind == "all" then kind = nil end
+  local items = store.list(kind)
+  if #items == 0 then
+    notify("no bookmarks", vim.log.levels.WARN)
+    return false
+  end
+
+  -- Sync extmarks so line/col are current before comparing.
+  for _, bm in ipairs(items) do store.sync_from_extmark(bm) end
+
+  table.sort(items, function(a, b)
+    if a.path ~= b.path then return a.path < b.path end
+    if (a.line or 0) ~= (b.line or 0) then return (a.line or 0) < (b.line or 0) end
+    return (a.col or 0) < (b.col or 0)
+  end)
+
+  local path = store.normalize(vim.api.nvim_buf_get_name(0)) or ""
+  local cur = vim.api.nvim_win_get_cursor(0)
+  local line, col = cur[1], cur[2] + 1
+
+  for _, bm in ipairs(items) do
+    if bm.path > path
+      or (bm.path == path and (bm.line or 0) > line)
+      or (bm.path == path and (bm.line or 0) == line and (bm.col or 0) > col)
+    then
+      return M.jump(bm.id)
+    end
+  end
+  return M.jump(items[1].id) -- wrap
+end
+
+--- Jump to the previous bookmark before the current cursor position, wrapping around.
+--- `kind` filters by type ("file"/"line"/"location"); nil or "all" searches everything.
+function M.jump_prev(kind)
+  ensure_setup()
+  if kind == "all" then kind = nil end
+  local items = store.list(kind)
+  if #items == 0 then
+    notify("no bookmarks", vim.log.levels.WARN)
+    return false
+  end
+
+  for _, bm in ipairs(items) do store.sync_from_extmark(bm) end
+
+  table.sort(items, function(a, b)
+    if a.path ~= b.path then return a.path < b.path end
+    if (a.line or 0) ~= (b.line or 0) then return (a.line or 0) < (b.line or 0) end
+    return (a.col or 0) < (b.col or 0)
+  end)
+
+  local path = store.normalize(vim.api.nvim_buf_get_name(0)) or ""
+  local cur = vim.api.nvim_win_get_cursor(0)
+  local line, col = cur[1], cur[2] + 1
+
+  for i = #items, 1, -1 do
+    local bm = items[i]
+    if bm.path < path
+      or (bm.path == path and (bm.line or 0) < line)
+      or (bm.path == path and (bm.line or 0) == line and (bm.col or 0) < col)
+    then
+      return M.jump(bm.id)
+    end
+  end
+  return M.jump(items[#items].id) -- wrap
+end
+
 ----------------------------------------------------------------------
 -- popup
 ----------------------------------------------------------------------

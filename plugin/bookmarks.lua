@@ -56,6 +56,24 @@ end, {
   desc = "Open the bookmarks popup (all|files|lines|locations)",
 })
 
+cmd("BookmarkNext", function(o)
+  local kind = (o.args ~= "" and KIND[o.args]) or nil
+  api().jump_next(kind)
+end, {
+  nargs = "?",
+  complete = complete_kinds,
+  desc = "Jump to next bookmark (all|files|lines|locations)",
+})
+
+cmd("BookmarkPrev", function(o)
+  local kind = (o.args ~= "" and KIND[o.args]) or nil
+  api().jump_prev(kind)
+end, {
+  nargs = "?",
+  complete = complete_kinds,
+  desc = "Jump to previous bookmark (all|files|lines|locations)",
+})
+
 cmd("BookmarksClear", function(o)
   if o.args == "" then
     local n = api().clear(nil)
