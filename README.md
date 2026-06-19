@@ -16,6 +16,7 @@ Requires Neovim 0.10+ (uses extmark signs and floating-window titles).
 - Delete a single bookmark or clear everything (or just the current tab) from the popup.
 - Jump straight to a bookmark from the popup.
 - **Next / previous navigation** — cycle through bookmarks in order without opening the popup.
+- **Inline preview pane** — a second floating window beside the list shows file content centred on the bookmarked line/column, with syntax highlighting.
 - Sign-column markers for line/location bookmarks that move with your edits.
 - Persistent across sessions (JSON file under `stdpath("data")`).
 - Full Lua API mirroring every feature.
@@ -68,6 +69,12 @@ require("bookmarks").setup({
     height = 0.6,       -- fraction of lines,   or an integer for absolute height
     border = "rounded",
     title = " Bookmarks ",
+  },
+
+  -- Preview pane shown beside the list (requires ~74+ columns).
+  -- Set enable = false to disable.
+  preview = {
+    enable = true,
   },
 
   -- Keymaps active only inside the popup:
