@@ -15,6 +15,8 @@ Requires Neovim 0.10+ (uses extmark signs and floating-window titles).
 - A floating popup with tabs for **All / Files / Lines / Locations**, showing counts.
 - Delete a single bookmark or clear everything (or just the current tab) from the popup.
 - Jump straight to a bookmark from the popup.
+- **Next / previous navigation** — cycle through bookmarks in order without opening the popup.
+- **Inline preview pane** — a second floating window beside the list shows file content centred on the bookmarked line/column, with syntax highlighting.
 - Sign-column markers for line/location bookmarks that move with your edits.
 - Persistent across sessions (JSON file under `stdpath("data")`).
 - Full Lua API mirroring every feature.
@@ -69,6 +71,12 @@ require("bookmarks").setup({
     title = " Bookmarks ",
   },
 
+  -- Preview pane shown beside the list (requires ~74+ columns).
+  -- Set enable = false to disable.
+  preview = {
+    enable = true,
+  },
+
   -- Keymaps active only inside the popup:
   keymaps = {
     jump = "<CR>",
@@ -95,6 +103,8 @@ vim.keymap.set("n", "<leader>bf", bm.bookmark_file,     { desc = "Bookmark file"
 vim.keymap.set("n", "<leader>bl", bm.toggle_line,       { desc = "Toggle line bookmark" })
 vim.keymap.set("n", "<leader>bk", bm.bookmark_location, { desc = "Bookmark location" })
 vim.keymap.set("n", "<leader>bb", function() bm.open() end, { desc = "Open bookmarks" })
+vim.keymap.set("n", "]b", bm.jump_next, { desc = "Next bookmark" })
+vim.keymap.set("n", "[b", bm.jump_prev, { desc = "Previous bookmark" })
 ```
 
 ## Commands
@@ -107,6 +117,8 @@ vim.keymap.set("n", "<leader>bb", function() bm.open() end, { desc = "Open bookm
 | `:BookmarkToggleLine` | Toggle a line bookmark on the current line. |
 | `:BookmarkToggleFile` | Toggle a file bookmark for the current buffer. |
 | `:Bookmarks [all\|files\|lines\|locations]` | Open the popup (optionally on a tab). |
+| `:BookmarkNext [files\|lines\|locations]` | Jump to the next bookmark (wraps around). |
+| `:BookmarkPrev [files\|lines\|locations]` | Jump to the previous bookmark (wraps around). |
 | `:BookmarksClear [all\|files\|lines\|locations]` | Clear bookmarks (all by default). |
 
 ## Inside the popup
@@ -142,6 +154,8 @@ bm.clear(kind?)           -- delete all, or only one kind; returns count
 
 -- navigate / UI
 bm.jump(id)               -- open file and move cursor; returns true on success
+bm.jump_next(kind?)       -- jump to next bookmark after cursor position (wraps)
+bm.jump_prev(kind?)       -- jump to previous bookmark before cursor position (wraps)
 bm.open(kind?)            -- open the popup on a given tab
 bm.close()                -- close the popup
 

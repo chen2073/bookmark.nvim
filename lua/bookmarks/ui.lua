@@ -26,6 +26,9 @@ local state = {
   filter = "all",
   map = {}, -- 1-based lnum -> bookmark
   entry_lines = {}, -- sorted list of selectable lnums
+  preview_buf = nil,
+  preview_win = nil,
+  preview_path = nil, -- last path shown; used to avoid redundant filetype reloads
 }
 
 ----------------------------------------------------------------------
@@ -216,7 +219,95 @@ local function current_bookmark()
   return state.map[lnum], lnum
 end
 
+local function update_preview()
+  local pwin = state.preview_win
+  if not (pwin and vim.api.nvim_win_is_valid(pwin)) then
+    return
+  end
+  local pbuf = state.preview_buf
+  if not (pbuf and vim.api.nvim_buf_is_valid(pbuf)) then
+    return
+  end
+
+  local bm = current_bookmark()
+  vim.api.nvim_buf_clear_namespace(pbuf, ns, 0, -1)
+  vim.bo[pbuf].modifiable = true
+
+  if not bm then
+    vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, {})
+    vim.bo[pbuf].modifiable = false
+    return
+  end
+
+  -- Prefer an already-loaded buffer to avoid disk reads.
+  local file_lines
+  local fbuf = store.get_buf_for_path(bm.path)
+  if fbuf and vim.api.nvim_buf_is_valid(fbuf) and vim.api.nvim_buf_is_loaded(fbuf) then
+    file_lines = vim.api.nvim_buf_get_lines(fbuf, 0, -1, false)
+  else
+    local ok, read = pcall(vim.fn.readfile, bm.path, "", 10000)
+    if ok and type(read) == "table" then
+      file_lines = read
+    end
+  end
+
+  if not file_lines or #file_lines == 0 then
+    vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, { "(cannot read file)" })
+    vim.bo[pbuf].modifiable = false
+    return
+  end
+
+  local total = #file_lines
+  local target = math.min(math.max(bm.line or 1, 1), total)
+  local win_h = vim.api.nvim_win_get_height(pwin)
+  local ctx = math.floor(win_h / 2)
+  local first = math.max(1, target - ctx)
+  local last = math.min(total, first + win_h - 1)
+
+  local content = {}
+  for i = first, last do
+    table.insert(content, file_lines[i])
+  end
+  vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, content)
+  vim.bo[pbuf].modifiable = false
+
+  -- Update filetype / syntax only when the path changes.
+  if bm.path ~= state.preview_path then
+    state.preview_path = bm.path
+    local ok, ft = pcall(vim.filetype.match, { filename = bm.path, buf = pbuf })
+    vim.bo[pbuf].filetype = (ok and ft) or ""
+  end
+
+  -- Highlight the target line and column, then position the preview cursor.
+  if bm.type ~= "file" then
+    local hl_row = target - first -- 0-based index into `content`
+    pcall(vim.api.nvim_buf_set_extmark, pbuf, ns, hl_row, 0, {
+      line_hl_group = "CursorLine",
+    })
+    if bm.type == "location" and bm.col then
+      local col0 = math.max(0, bm.col - 1)
+      local line_text = content[hl_row + 1] or ""
+      if col0 < #line_text then
+        pcall(vim.api.nvim_buf_set_extmark, pbuf, ns, hl_row, col0, {
+          end_row = hl_row,
+          end_col = math.min(col0 + 1, #line_text),
+          hl_group = "Search",
+        })
+      end
+    end
+    pcall(vim.api.nvim_win_set_cursor, pwin, { hl_row + 1, 0 })
+  else
+    pcall(vim.api.nvim_win_set_cursor, pwin, { 1, 0 })
+  end
+end
+
 function M.close()
+  if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win) then
+    pcall(vim.api.nvim_win_close, state.preview_win, true)
+  end
+  state.preview_win = nil
+  state.preview_buf = nil
+  state.preview_path = nil
   if is_open() then
     vim.api.nvim_win_close(state.win, true)
   end
@@ -239,6 +330,7 @@ function M.action_delete()
   end
   store.delete(bm.id)
   M.render(lnum)
+  update_preview()
 end
 
 function M.action_delete_all()
@@ -255,12 +347,14 @@ function M.action_delete_all()
   end
   store.delete_all(state.filter == "all" and nil or state.filter)
   M.render()
+  update_preview()
 end
 
 function M.set_filter(f)
   if vim.tbl_contains(FILTERS, f) then
     state.filter = f
     M.render()
+    update_preview()
   end
 end
 
@@ -323,12 +417,32 @@ function M.open(filter)
 
   local ui = config.options.ui
   local total_w, total_h = vim.o.columns, vim.o.lines
-  local width = dimension(ui.width or 0.6, total_w, 40)
   local height = dimension(ui.height or 0.6, total_h, 8)
-  width = math.min(width, total_w - 2)
-  height = math.min(height, total_h - 2)
+  height = math.min(height, total_h - 4)
   local row = math.floor((total_h - height) / 2 - 1)
-  local col = math.floor((total_w - width) / 2)
+
+  -- Decide whether to show the preview pane beside the list.
+  local preview_cfg = config.options.preview or {}
+  local show_preview = preview_cfg.enable ~= false
+
+  local list_w, preview_w, list_col, preview_col
+  if show_preview then
+    list_w = math.max(40, math.floor(total_w * 0.38))
+    preview_w = total_w - list_w - 6 -- 2 outer margins + 2 gap + 2 shared border cols
+    if preview_w < 30 then
+      show_preview = false -- not enough horizontal room
+    end
+  end
+
+  if show_preview then
+    -- Centre the pair of windows together.
+    list_col = math.max(0, math.floor((total_w - list_w - 2 - preview_w) / 2))
+    preview_col = list_col + list_w + 2
+  else
+    list_w = dimension(ui.width or 0.6, total_w, 40)
+    list_w = math.min(list_w, total_w - 2)
+    list_col = math.floor((total_w - list_w) / 2)
+  end
 
   local buf = vim.api.nvim_create_buf(false, true)
   state.buf = buf
@@ -337,10 +451,10 @@ function M.open(filter)
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
-    width = width,
+    width = list_w,
     height = height,
     row = row,
-    col = col,
+    col = list_col,
     style = "minimal",
     border = ui.border or "rounded",
     title = ui.title or " Bookmarks ",
@@ -350,8 +464,37 @@ function M.open(filter)
   vim.wo[win].cursorline = true
   vim.wo[win].wrap = false
 
+  if show_preview then
+    local pbuf = vim.api.nvim_create_buf(false, true)
+    state.preview_buf = pbuf
+    vim.bo[pbuf].bufhidden = "wipe"
+
+    local pwin = vim.api.nvim_open_win(pbuf, false, {
+      relative = "editor",
+      width = preview_w,
+      height = height,
+      row = row,
+      col = preview_col,
+      style = "minimal",
+      border = ui.border or "rounded",
+      title = " Preview ",
+      title_pos = "center",
+    })
+    state.preview_win = pwin
+    vim.wo[pwin].wrap = false
+
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      buffer = buf,
+      callback = update_preview,
+    })
+  end
+
   setup_keymaps(buf)
   M.render()
+
+  if show_preview then
+    update_preview()
+  end
 end
 
 return M

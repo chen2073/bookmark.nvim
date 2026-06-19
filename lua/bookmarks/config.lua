@@ -26,6 +26,11 @@ M.defaults = {
     title = " Bookmarks ",
   },
 
+  -- Preview window shown beside the popup when there is enough room.
+  preview = {
+    enable = true,
+  },
+
   -- Keymaps active *inside* the popup window only.
   keymaps = {
     jump = "<CR>",
